@@ -130,9 +130,14 @@ async function loadData(forceUpdate = false) {
     const oldSpecs = await getAll('specs');
     const oldMaterials = await getAll('materials');
     const specRemarks = {};
-    oldSpecs.forEach(s => { if (s.remark) specRemarks[s.id] = s.remark; });
+oldSpecs.forEach(s => { if (s.remark) specRemarks[`${s.brand_id}_${s.name}`] = s.remark; });
     const materialRemarks = {};
-    oldMaterials.forEach(m => { if (m.remark) materialRemarks[m.id] = { remark: m.remark, type: m.material_type }; });
+oldMaterials.forEach(m => {
+    if (m.remark) {
+        const key = `${m.material_type}_${m.spec_id}_${m.custom_name}`;
+        materialRemarks[key] = m.remark;
+    }
+});
 
     // 2. 全量覆盖
     await clearAndPutAll('brands', json.brands || []);
@@ -963,57 +968,51 @@ document.getElementById('log-viewer-close').addEventListener('click', () => {
 })();
 // ==================== 备注恢复 ====================
 async function restoreRemarks(specRemarks, materialRemarks, newMaterials) {
-    // 1. 恢复规格备注：始终保留本地
-    for (const [id, remark] of Object.entries(specRemarks)) {
-        const tx = db.transaction('specs', 'readwrite');
-        const store = tx.objectStore('specs');
-        const spec = await new Promise(resolve => {
-            const req = store.get(parseInt(id));
-            req.onsuccess = () => resolve(req.result);
-        });
-        if (spec) {
-            spec.remark = remark;
-            store.put(spec);
+    // 1. 恢复规格备注：按 brand_id + name 匹配
+    const allSpecs = await getAll('specs'); // 新数据已在 DB 中
+    for (const spec of allSpecs) {
+        const key = `${spec.brand_id}_${spec.name}`;
+        const localRemark = specRemarks[key];
+        if (localRemark) {
+            const tx = db.transaction('specs', 'readwrite');
+            const store = tx.objectStore('specs');
+            const specRecord = await new Promise(resolve => {
+                const req = store.get(spec.id);
+                req.onsuccess = () => resolve(req.result);
+            });
+            if (specRecord) {
+                specRecord.remark = localRemark;
+                store.put(specRecord);
+            }
+            await new Promise(r => { tx.oncomplete = r; });
         }
-        await new Promise(r => { tx.oncomplete = r; });
     }
 
     // 2. 恢复材料备注
-    for (const [id, data] of Object.entries(materialRemarks)) {
-        const materialType = data.type;
-        const localRemark = data.remark;
+    const allMaterials = await getAll('materials');
+    for (const mat of allMaterials) {
+        const key = `${mat.material_type}_${mat.spec_id}_${mat.custom_name}`;
+        const localRemark = materialRemarks[key];
+        if (!localRemark) continue;
 
-        if (materialType === 'BOTTLE' || materialType === 'PUMP_CAP') {
+        if (mat.material_type === 'BOTTLE' || mat.material_type === 'PUMP_CAP') {
             // 非标签类：始终恢复本地备注
+            mat.remark = localRemark;
             const tx = db.transaction('materials', 'readwrite');
             const store = tx.objectStore('materials');
-            const mat = await new Promise(resolve => {
-                const req = store.get(parseInt(id));
-                req.onsuccess = () => resolve(req.result);
-            });
-            if (mat) {
-                mat.remark = localRemark;
-                store.put(mat);
-            }
+            store.put(mat);
             await new Promise(r => { tx.oncomplete = r; });
-        } else if (materialType === 'LABEL' || materialType === 'PROMO_TAG') {
-            // 标签类：检查官方是否有非空备注
-            const newMat = newMaterials.find(m => m.id === parseInt(id));
-            if (newMat && (!newMat.remark || newMat.remark.trim() === '')) {
-                // 官方无备注或为空，恢复本地备注
+        } else if (mat.material_type === 'LABEL' || mat.material_type === 'PROMO_TAG') {
+            // 检查官方是否有非空备注
+            if (!mat.remark || mat.remark.trim() === '') {
+                // 官方无备注，恢复本地备注
+                mat.remark = localRemark;
                 const tx = db.transaction('materials', 'readwrite');
                 const store = tx.objectStore('materials');
-                const mat = await new Promise(resolve => {
-                    const req = store.get(parseInt(id));
-                    req.onsuccess = () => resolve(req.result);
-                });
-                if (mat) {
-                    mat.remark = localRemark;
-                    store.put(mat);
-                }
+                store.put(mat);
                 await new Promise(r => { tx.oncomplete = r; });
             }
-            // 官方有非空备注：不恢复，保持官方备注
+            // 官方有备注则保留官方，不恢复本地
         }
     }
 }
