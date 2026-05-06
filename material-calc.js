@@ -341,10 +341,12 @@ function renderPromoTags(query) {
     const promos = materialsData.filter(m => m.material_type === 'PROMO_TAG');
 
     const sorted = promos.sort((a, b) => {
-        const countA = promoTagUsageMap[a.id] || 0;
-        const countB = promoTagUsageMap[b.id] || 0;
-        return countB - countA || (b.updated_at || 0) - (a.updated_at || 0);
-    });
+    const codeA = a.m_code || '';
+    const codeB = b.m_code || '';
+    const countA = promoTagUsageMap[codeA] || 0;
+    const countB = promoTagUsageMap[codeB] || 0;
+    return countB - countA || (b.updated_at || 0) - (a.updated_at || 0);
+});
 
     const filtered = query 
         ? sorted.filter(t => (t.m_code || '').includes(query))
@@ -386,7 +388,10 @@ function renderPromoTags(query) {
 function selectPromoTag(promo) {
     selectedPromoTag = promo;
     selectedMaterial = null;
-    promoTagUsageMap[promo.id] = (promoTagUsageMap[promo.id] || 0) + 1;
+    const mCode = promo.m_code || '';
+if (mCode) {
+    promoTagUsageMap[mCode] = (promoTagUsageMap[mCode] || 0) + 1;
+}
     savePromoUsageMap();  // ✅ 持久化
 
     renderMaterials();
